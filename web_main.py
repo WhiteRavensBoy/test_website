@@ -1,11 +1,18 @@
 from fastapi import FastAPI
 import asyncio
+import os
 import ollama
 import sys
 
-# Place this at the start of your script
-if sys.platform == 'win32':
-    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+OLLAMA_HOST = os.getenv("OLLAMA_HOST")
+if OLLAMA_HOST is None:
+    if os.path.exists("/.dockerenv"):
+        OLLAMA_HOST = "http://host.docker.internal:11434"
+    else:
+        OLLAMA_HOST = "http://127.0.0.1:11434"
+
+client = ollama.Client(host=OLLAMA_HOST)
 
 concurrent_llm_limit = 50
 lock = asyncio.Semaphore(concurrent_llm_limit)
@@ -19,7 +26,7 @@ count = 0
 async def chat_ai(query: str):
     async with lock:
         response = await asyncio.to_thread(
-            ollama.chat,
+            client.chat,
             model=model,
             messages=[
                 {
