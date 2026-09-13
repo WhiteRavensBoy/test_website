@@ -1,0 +1,6 @@
+fastapi == 0.141.1
+fastapi[standard]
+langgraph
+ollama
+langchain-ollama
+locust
