@@ -4,6 +4,8 @@ import re
 import ollama
 from langchain_ollama import OllamaLLM
 import logging
+import time
+import functools
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -26,6 +28,15 @@ llm = OllamaLLM(model=model)
 
 UNSAFE_KEYWORDS = {"sex", "sexual", "nude", "porn", "explicit", "erotic", "xxx"}
 
+def calculate_time(func):
+    @functools.wraps(func)
+    def wrapper():
+        start_time = time.time()
+        func()
+        end_time = time.time()
+        print(f"function completed in :{end_time-start_time} seconds.")
+    return wrapper
+    
 
 def normalize_intent(value: str) -> str:
     logger.info("normalizing intent category")
@@ -98,6 +109,7 @@ def route_by_intent(state: State):
 
     return "unsupported"
 
+
 logger.info("starting")
 graph = StateGraph(State)
 
@@ -118,13 +130,15 @@ graph.add_edge("generate", END)
 
 app = graph.compile()
 
-result = app.invoke({
-    "question": "tell me story in exact 20 words",
-    "answer": "",
-    "approved": False,
-    "intent": ""
-})
+def ask_agent(query: str):
+    result = app.invoke({
+        "question": query,
+        "answer": "",
+        "approved": False,
+        "intent": ""
+    })
 
-print(result)
+    print(result)
+    return result
 
 

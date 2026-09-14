@@ -3,7 +3,11 @@ import asyncio
 import os
 import ollama
 import sys
+from agent import ask_agent
+import functools
+import time
 
+#from vllm import LLM, SamplingParams
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST")
 if OLLAMA_HOST is None:
@@ -22,6 +26,18 @@ app = FastAPI()
 model = "llava:7b"
 count = 0
 
+#llm = LLM(model=model, trust_remote_code= True)
+#sampling_params = SamplingParams(temparature=0.7, top_p=0.95, max_tokens=100)
+
+def calculate_time(func):
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = await func(*args, **kwargs)
+        end_time = time.time()
+        print(f"function completed in :{end_time-start_time} seconds.")
+        return result
+    return wrapper
 
 async def chat_ai(query: str):
     async with lock:
@@ -36,6 +52,13 @@ async def chat_ai(query: str):
             ],
         )
         return response["message"]["content"]
+
+async def generate_with_vllm(prompt: str):
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: llm.generate(prompt, sampling_params=sampling_params)
+    )
 
 
 @app.get("/")
@@ -55,6 +78,7 @@ def calculate_user_count(func):
 
 @app.get("/ask/{query}")
 @calculate_user_count
+@calculate_time
 async def ask_ai(query: str):
     ans = "User : " + str(query)
     response = await chat_ai(query=query)
@@ -62,3 +86,18 @@ async def ask_ai(query: str):
     print(count)
     print(ans)
     return ans
+
+@app.get("/ask_agent/{query}")
+@calculate_time
+async def ask_ai_agent(query: str):
+    response = ask_agent(query=query)
+    print(response)
+    return response
+"""
+@app.get("/ask_vllm/{query}")
+@calculate_user_count
+@calculate_time
+async def ask_ai_with_vllm(query: str):
+    response = generate_with_vllm(query=query)
+    print(response)
+    return response"""
