@@ -6,6 +6,7 @@ import sys
 from agent import ask_agent
 import functools
 import time
+from cache_utils import cache_response, get_cached_response
 
 #from vllm import LLM, SamplingParams
 
@@ -20,6 +21,8 @@ client = ollama.Client(host=OLLAMA_HOST)
 
 concurrent_llm_limit = 50
 lock = asyncio.Semaphore(concurrent_llm_limit)
+inflight_requests = {}
+inflight_lock = asyncio.Lock()
 
 app = FastAPI()
 
@@ -53,12 +56,36 @@ async def chat_ai(query: str):
         )
         return response["message"]["content"]
 
-async def generate_with_vllm(prompt: str):
-    loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(
-        None,
-        lambda: llm.generate(prompt, sampling_params=sampling_params)
-    )
+
+async def get_cached_or_generate(query: str) -> str:
+    cached_response = get_cached_response(query, model=model)
+    if cached_response:
+        return cached_response["response"]
+
+    async with inflight_lock:
+        cached_response = get_cached_response(query, model=model)
+        if cached_response:
+            return cached_response["response"]
+
+        if query not in inflight_requests:
+            inflight_requests[query] = asyncio.create_task(chat_ai(query=query))
+
+        task = inflight_requests[query]
+
+    try:
+        response = await task
+    except Exception:
+        async with inflight_lock:
+            if inflight_requests.get(query) is task:
+                inflight_requests.pop(query, None)
+        raise
+
+    async with inflight_lock:
+        if inflight_requests.get(query) is task:
+            inflight_requests.pop(query, None)
+
+    cache_response(query, model, response)
+    return response
 
 
 @app.get("/")
@@ -81,11 +108,12 @@ def calculate_user_count(func):
 @calculate_time
 async def ask_ai(query: str):
     ans = "User : " + str(query)
-    response = await chat_ai(query=query)
+    response = await get_cached_or_generate(query)
     ans += "\n" + response
     print(count)
     print(ans)
     return ans
+
 
 @app.get("/ask_agent/{query}")
 @calculate_time
@@ -93,6 +121,8 @@ async def ask_ai_agent(query: str):
     response = ask_agent(query=query)
     print(response)
     return response
+
+
 """
 @app.get("/ask_vllm/{query}")
 @calculate_user_count
@@ -100,4 +130,12 @@ async def ask_ai_agent(query: str):
 async def ask_ai_with_vllm(query: str):
     response = generate_with_vllm(query=query)
     print(response)
-    return response"""
+    return response
+    
+async def generate_with_vllm(prompt: str):
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: llm.generate(prompt, sampling_params=sampling_params)
+    )
+    """

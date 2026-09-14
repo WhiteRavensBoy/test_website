@@ -4,4 +4,6 @@ langgraph
 ollama
 langchain-ollama
 locust
-vllm
+redis
+pytest
+pytestasyncio
