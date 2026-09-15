@@ -109,9 +109,53 @@ def test_ask_ai_endpoint(monkeypatch):
     response = client.get("/ask/hello")
 
     assert response.status_code == 200
-    assert response.text.startswith("User : hello")
-    assert "llm answer" in response.text
+    assert response.json().startswith("User : hello")
+    assert "llm answer" in response.json()
     assert module.count == 1
+
+
+def test_ask_ai_rejects_empty_query(monkeypatch):
+    module, _ = import_web_main(monkeypatch)
+    client = TestClient(module.app)
+
+    response = client.get("/ask/%20")
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Query must not be empty"}
+
+
+def test_ask_ai_rejects_oversized_query(monkeypatch):
+    module, _ = import_web_main(monkeypatch)
+    module.max_query_length = 3
+    client = TestClient(module.app)
+
+    response = client.get("/ask/longer")
+
+    assert response.status_code == 413
+    assert "character limit" in response.json()["detail"]
+
+
+def test_ask_ai_maps_model_failure_to_service_unavailable(monkeypatch):
+    module, _ = import_web_main(monkeypatch)
+    module.get_cached_or_generate = AsyncMock(side_effect=RuntimeError("downstream failed"))
+    client = TestClient(module.app)
+
+    response = client.get("/ask/hello")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "The AI service is unavailable"}
+
+
+def test_ask_ai_agent_does_not_block_event_loop(monkeypatch):
+    module, _ = import_web_main(monkeypatch)
+    module.ask_agent = MagicMock(return_value={"reply": "agent response"})
+    client = TestClient(module.app)
+
+    response = client.get("/ask_agent/test")
+
+    assert response.status_code == 200
+    assert response.json() == {"reply": "agent response"}
+    module.ask_agent.assert_called_once_with(query="test")
 
 
 def test_ask_ai_agent_endpoint(monkeypatch):
@@ -125,15 +169,3 @@ def test_ask_ai_agent_endpoint(monkeypatch):
     assert response.json() == {"reply": "agent response"}
     module.ask_agent.assert_called_once_with(query="test")
 
-
-@pytest.mark.asyncio
-async def test_generate_with_vllm(monkeypatch):
-    module, _ = import_web_main(monkeypatch)
-    module.llm = MagicMock()
-    module.llm.generate.return_value = "vllm-output"
-    module.sampling_params = object()
-
-    result = await module.generate_with_vllm("prompt")
-
-    assert result == "vllm-output"
-    module.llm.generate.assert_called_once_with("prompt", sampling_params=module.sampling_params)

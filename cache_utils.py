@@ -1,12 +1,19 @@
 import redis
 import hashlib
 import json
+import logging
+import os
+
+logger = logging.getLogger(__name__)
 
 redis_client = redis.Redis(
-    host="localhost",
-    port=6379,
+    host=os.getenv("REDIS_HOST", "localhost"),
+    port=int(os.getenv("REDIS_PORT", "6379")),
     db=0,
     decode_responses=True,
+    socket_connect_timeout=0.2,
+    socket_timeout=0.5,
+    health_check_interval=30,
 )
 
 
@@ -25,9 +32,9 @@ def cache_response(prompt: str, model: str, response: str):
     }
 
     try:
-        redis_client.set(key, json.dumps(value), ex=30)
-    except redis.exceptions.ConnectionError:
-        print("Redis is not available. Cache write skipped.")
+        redis_client.set(key, json.dumps(value), ex=60)
+    except redis.exceptions.RedisError:
+        logger.warning("Redis cache write failed; continuing without cache")
 
 
 def get_cached_response(prompt: str, model: str):
@@ -35,14 +42,17 @@ def get_cached_response(prompt: str, model: str):
 
     try:
         cached = redis_client.get(key)
-    except redis.exceptions.ConnectionError:
-        print("Redis is not available. Cache lookup skipped.")
+    except redis.exceptions.RedisError:
+        logger.warning("Redis cache lookup failed; continuing without cache")
         return None
 
     if cached:
-        print("CACHE HIT..")
-        return json.loads(cached)
-    print("CACHE MISS...")
+        try:
+            logger.warning("cache hit")
+            return json.loads(cached)
+        except json.JSONDecodeError:
+            logger.warning("Ignoring malformed Redis cache entry")
+            return None
 
     return None
 
